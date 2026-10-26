@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Release or reclaim this computer's A2DP stream for a multipoint headset."""
+
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+
+ADDRESS = re.compile(r"^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$")
+A2DP_UUID = "0000110b-0000-1000-8000-00805f9b34fb"
+
+
+def run(command):
+    return subprocess.run(command, check=True, text=True, capture_output=True)
+
+
+def run_optional(command):
+    try:
+        return subprocess.run(command, check=False, text=True,
+                              capture_output=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return None
+
+
+def objects(kind):
+    result = run(["pactl", "--format=json", "list", kind])
+    value = json.loads(result.stdout or "[]")
+    return value if isinstance(value, list) else []
+
+
+def find_object(address, rows):
+    wanted = address.upper()
+    token = wanted.replace(":", "_")
+    for sink in rows:
+        properties = sink.get("properties") or {}
+        bluez_address = str(properties.get("api.bluez5.address", "")).upper()
+        name = str(sink.get("name", ""))
+        if bluez_address == wanted or token in name.upper():
+            return sink
+    return None
+
+
+def object_for(address, rows):
+    value = find_object(address, rows)
+    return str(value.get("name", "")) if value else ""
+
+
+def state_path(address):
+    runtime = os.environ.get("XDG_RUNTIME_DIR") or "/run/user/%d" % os.getuid()
+    return os.path.join(runtime, "sony-xm4-host-audio-%s.json"
+                        % address.upper().replace(":", "_"))
+
+
+def save_state(address, value):
+    path = state_path(address)
+    temporary = path + ".tmp-%d" % os.getpid()
+    with open(temporary, "w", encoding="utf-8") as target:
+        json.dump(value, target, separators=(",", ":"))
+        target.write("\n")
+    os.replace(temporary, path)
+
+
+def load_state(address):
+    try:
+        with open(state_path(address), "r", encoding="utf-8") as source:
+            value = json.load(source)
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError, TypeError):
+        return {}
+
+
+def clear_state(address):
+    try:
+        os.unlink(state_path(address))
+    except FileNotFoundError:
+        pass
+
+
+def change(action, address):
+    if action not in ("status", "release", "claim") or not ADDRESS.fullmatch(address):
+        raise ValueError("usage: host-audio status|release|claim <Bluetooth address>")
+    card_row = find_object(address, objects("cards"))
+    if action == "status":
+        sink_row = find_object(address, objects("sinks"))
+        # Service calls status only for a connected headset. With no local
+        # Bluetooth sink, A2DP is necessarily available to the other source;
+        # the runtime marker merely preserves the streams/profile for reclaim.
+        released = not sink_row
+        return {"ok": True, "target": "other" if released else "computer",
+                "card": str(card_row.get("name", "")) if card_row else "",
+                "sink": str(sink_row.get("name", "")) if sink_row else ""}
+    if action == "release":
+        card = str(card_row.get("name", "")) if card_row else ""
+        if not card_row or not card:
+            raise RuntimeError("Bluetooth audio card not found")
+        # Suspending a sink is not enough: a silent but active Firefox stream
+        # wakes it immediately. Profile "off" removes every local audio
+        # transport while the headset's Bluetooth ACL and Sony control channel
+        # stay connected, which lets the other multipoint source start A2DP.
+        sink_row = find_object(address, objects("sinks"))
+        sink_index = sink_row.get("index") if sink_row else None
+        inputs = []
+        if sink_index is not None:
+            for stream in objects("sink-inputs"):
+                if stream.get("sink") == sink_index and stream.get("index") is not None:
+                    inputs.append(stream["index"])
+        profile = str(card_row.get("active_profile") or "a2dp-sink")
+        if not profile.startswith("a2dp-sink"):
+            profile = "a2dp-sink"
+        save_state(address, {"profile": profile, "inputs": inputs})
+        run(["pactl", "set-card-profile", card, "off"])
+        target = "other"
+        sink = ""
+    else:
+        previous = load_state(address)
+        profile = str(previous.get("profile") or "a2dp-sink")
+        if not profile.startswith("a2dp-sink"):
+            profile = "a2dp-sink"
+        # WirePlumber may remove the whole card after profile "off" has closed
+        # A2DP. Reopen only the remote Audio Sink service; the Sony control
+        # profile and the overall multipoint ACL remain untouched.
+        if not card_row:
+            for attempt in range(4):
+                if attempt:
+                    time.sleep(0.5)
+                run_optional(["bluetoothctl", "connect", address, A2DP_UUID])
+                for _ in range(10):
+                    card_row = find_object(address, objects("cards"))
+                    if card_row:
+                        break
+                    time.sleep(0.2)
+                if card_row:
+                    break
+        card = str(card_row.get("name", "")) if card_row else ""
+        if not card:
+            raise RuntimeError("Phone is still using A2DP; pause playback on phone")
+        run(["pactl", "set-card-profile", card, profile])
+        sink = ""
+        for _ in range(15):
+            sink = object_for(address, objects("sinks"))
+            if sink:
+                break
+            time.sleep(0.1)
+        if not sink:
+            raise RuntimeError("A2DP enabled, but audio sink did not appear")
+        run(["pactl", "set-default-sink", sink])
+        for stream in previous.get("inputs", []):
+            run_optional(["pactl", "move-sink-input", str(stream), sink])
+        clear_state(address)
+        target = "computer"
+    return {"ok": True, "target": target, "card": card, "sink": sink}
+
+
+def main(argv):
+    try:
+        if len(argv) != 3:
+            raise ValueError("usage: host-audio status|release|claim <Bluetooth address>")
+        result = change(argv[1], argv[2])
+    except (ValueError, RuntimeError, OSError, subprocess.SubprocessError,
+            json.JSONDecodeError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        return 1
+    print(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))

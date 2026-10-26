@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "id": "sony-xm4",
+  "name": "Sony WH-1000XM4",
+  "version": "1.2.0",
+  "author": "Community",
+  "license": "MIT",
+  "description": "Sony WH-1000XM4 and Bluetooth headphone control for Omarchy: ANC, Wind Noise Reduction, Ambient Sound (0-20 + Focus on Voice), Multipoint toggle, Auto power-off, PipeWire codec selector, and seamless A2DP audio handoff.",
+  "kinds": [
+    "service",
+    "bar-widget"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "service": "Service.qml",
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Sony WH-1000XM4",
+    "description": "Battery, noise control, multipoint A2DP handoff, and codec switcher.",
+    "category": "Audio",
+    "aliases": [
+      "sony",
+      "xm4",
+      "wh-1000xm4",
+      "headphones",
+      "headset",
+      "anc",
+      "codec",
+      "battery"
+    ],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "deviceMatch": "",
+      "lowBatteryThreshold": 20,
+      "showPercentage": false,
+      "hideWhenDisconnected": true,
+      "notifyLowBattery": true,
+      "useFastPair": true,
+      "useModeControl": true,
+      "autoReconnect": true,
+      "autoAudioHandoff": true,
+      "audioHandoffDelay": 3
+    },
+    "schema": [
+      {
+        "key": "deviceMatch",
+        "type": "string",
+        "label": "Device name or MAC filter",
+        "defaultValue": ""
+      },
+      {
+        "key": "useFastPair",
+        "type": "boolean",
+        "label": "Google Fast Pair battery telemetry",
+        "defaultValue": true
+      },
+      {
+        "key": "useModeControl",
+        "type": "boolean",
+        "label": "Noise control & Ambient Sound",
+        "defaultValue": true
+      },
+      {
+        "key": "autoReconnect",
+        "type": "boolean",
+        "label": "Auto-reconnect paired headphones",
+        "defaultValue": true
+      },
+      {
+        "key": "autoAudioHandoff",
+        "type": "boolean",
+        "label": "Release A2DP to phone on media pause",
+        "defaultValue": true
+      },
+      {
+        "key": "audioHandoffDelay",
+        "type": "integer",
+        "label": "Audio handoff delay (s)",
+        "min": 1,
+        "max": 15,
+        "step": 1,
+        "defaultValue": 3
+      },
+      {
+        "key": "lowBatteryThreshold",
+        "type": "integer",
+        "label": "Low battery threshold (%)",
+        "min": 5,
+        "max": 50,
+        "step": 5,
+        "defaultValue": 20
+      },
+      {
+        "key": "showPercentage",
+        "type": "boolean",
+        "label": "Show battery percentage in bar",
+        "defaultValue": false
+      },
+      {
+        "key": "hideWhenDisconnected",
+        "type": "boolean",
+        "label": "Hide when disconnected",
+        "defaultValue": true
+      },
+      {
+        "key": "notifyLowBattery",
+        "type": "boolean",
+        "label": "Low battery notification",
+        "defaultValue": true
+      }
+    ]
+  }
+}
